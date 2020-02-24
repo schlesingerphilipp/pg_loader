@@ -1,0 +1,21 @@
+version: '3'
+services:
+  postgres:
+    image: 'postgres:10.1'
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_USER: example
+    network_mode: host
+  data_loader:
+    build: 'app'
+    volumes:
+      - "/home/ps/data:/data"
+      - "./app:/app"
+    environment:
+      in_path: /data/crypto-currency-pairs-at-minute-resolution
+      out_path: /data/dump.csv
+      selected: absusd, abseth
+      host: localhost
+    network_mode: host
