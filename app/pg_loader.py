@@ -1,14 +1,17 @@
 import csv
 import subprocess
+import sys
+
 import psycopg2
 import os
 
 
 class PgLoader:
-    def __init__(self):
+    def __init__(self, selected):
         self.in_path: str = os.getenv("in_path", "/data/crypto-currency-pairs-at-minute-resolution")
-        self.selected = [x.strip() for x in os.getenv("selected").split(",")]
-        self.out_path = os.getenv("out_path", "/data/dump.csv")
+        self.selected = [x.strip() for x in selected[1:len(selected)]]
+        self.combi_name = '_'.join(selected[1:len(selected)])
+        self.out_path = os.getenv("out_path", "/data/") + f"{self.combi_name}.csv"
         self.headers = os.getenv("headers", ["open", "close", "high", "low", "volume"])
         self.pg_config = {
             "dbname": os.getenv("dbname", "example"),
@@ -40,8 +43,8 @@ class PgLoader:
         fields = self.get_fields()
         cur = conn.cursor()
         typed_fields = [f"{field} varchar(255)" for field in fields]
-        cur.execute(f"CREATE TABLE IF NOT EXISTS process (time BIGINT, {', '.join(typed_fields)}, "
-                    f"CONSTRAINT pk_process PRIMARY KEY (time));")
+        cur.execute(f"CREATE TABLE IF NOT EXISTS {self.combi_name} (time BIGINT, {', '.join(typed_fields)}, "
+                    f"CONSTRAINT pk_{self.combi_name} PRIMARY KEY (time));")
 
     def load_to_db(self, csvs, conn):
         cur = conn.cursor()
@@ -50,21 +53,21 @@ class PgLoader:
             for line in csv_file:
                 selected_fields = [f"{name}_{head}" for head in self.headers]
                 field_value_tuples = [f"{selected_fields[i - 1]}='{line[i]}'" for i in range(1, len(line))]
-                query = f"insert into process(time, {', '.join(selected_fields)}) values({','.join(line)}) " \
-                    f"on conflict on CONSTRAINT pk_process do update set {', '.join(field_value_tuples)} " \
-                    f"where process.time = {line[0]};"
+                query = f"insert into {self.combi_name}(time, {', '.join(selected_fields)}) values({','.join(line)}) " \
+                    f"on conflict on CONSTRAINT pk_{self.combi_name} do update set {', '.join(field_value_tuples)} " \
+                    f"where {self.combi_name}.time = {line[0]};"
                 cur.execute(query)
         conn.commit()
 
     def dump_db(self):
         subprocess.run([
             'psql', "-h", self.pg_config["host"], "-U", self.pg_config["user"], "-c",
-            f"\copy (select * from process order by time) to '{self.out_path}' WITH CSV HEADER;"
+            f"\copy (select * from {self.combi_name} order by time) to '{self.out_path}' WITH CSV HEADER;"
         ])
 
     def clean_up(self):
         subprocess.check_call([
-            'psql', "-h", self.pg_config["host"], "-U", self.pg_config["user"], "-c", f"drop table process;"])
+            'psql', "-h", self.pg_config["host"], "-U", self.pg_config["user"], "-c", f"drop table {self.combi_name};"])
 
     def load_all_data(self, conn):
         print("Read files")
@@ -74,32 +77,30 @@ class PgLoader:
         print("Write to DB")
         self.load_to_db(csvs, conn)
 
-    @staticmethod
-    def update_initial(first_row, fields, cur):
+    def update_initial(self, first_row, fields, cur):
         updated = [first_row[i] if first_row[i] is not None else '0' for i in range(1, len(first_row))]
         updated_k_v = [f"{fields[i]} = '{updated[i]}'" for i in range(0, len(updated))]
-        cur.execute(f"update process set {', '.join(updated_k_v)} where time = {first_row[0]};")
+        cur.execute(f"update {self.combi_name} set {', '.join(updated_k_v)} where time = {first_row[0]};")
         return [first_row[0]] + updated
 
     def merge_data(self, conn):
         fields = self.get_fields()
         cur = conn.cursor()
-        cur.execute("select * from process order by time ASC limit 1;")
+        cur.execute(f"select * from {self.combi_name} order by time ASC limit 1;")
         current = cur.fetchone()
         current = self.update_initial(current, fields, cur)
         next_row = self.get_next(cur, current)
         while next_row:
             updated = [next_row[i] if next_row[i] is not None else current[i] for i in range(1, len(next_row))]
             updated_k_v = [f"{fields[i]} = '{updated[i]}'" for i in range(0, len(updated))]
-            cur.execute(f"update process set {', '.join(updated_k_v)} where time = {next_row[0]};")
+            cur.execute(f"update {self.combi_name} set {', '.join(updated_k_v)} where time = {next_row[0]};")
             conn.commit()
             current = [next_row[0]] + updated
             next_row = self.get_next(cur, current)
 
-    @staticmethod
-    def get_next(cursor, current):
+    def get_next(self, cursor, current):
         current_time = current[0]
-        cursor.execute(f"select * from process where time > {current_time} order by time asc limit 1;")
+        cursor.execute(f"select * from {self.combi_name} where time > {current_time} order by time asc limit 1;")
         return cursor.fetchone()
 
     def get_fields(self):
@@ -126,6 +127,6 @@ class PgLoader:
 
 
 if __name__ == "__main__":
-    loader = PgLoader()
+    loader = PgLoader(sys.argv)
     loader.print()
     loader.transform_into_one()
