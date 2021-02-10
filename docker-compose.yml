@@ -8,14 +8,27 @@ services:
       POSTGRES_PASSWORD: example
       POSTGRES_USER: example
     network_mode: host
+    volumes:
+      - "/home/ps/data/pgdata:/var/lib/postgresql/data"
   data_loader:
     build: 'app'
     volumes:
-      - "/home/ps/data:/data"
+      - "/home/ps/data/crypto-currency-pairs-at-minute-resolution:/data"
       - "./app:/app"
+    command: "echo dummy"  # "python3 -u /app/main.py" # "sleep 50000000"#
     environment:
-      in_path: /data/crypto-currency-pairs-at-minute-resolution
+      in_path: /data
       out_path: /data/dump.csv
-      selected: absusd, abseth
+      selected: absusd,abseth
       host: localhost
+      PGDATA: /var/lib/postgresql/data/pgdata
     network_mode: host
+  redis:
+    image: 'redis'
+    ports:
+      - '6379:6379'
+    network_mode: host
+    volumes:
+      - "/home/ps/data/redis:/data"
+    command: "redis-server --appendonly yes"
+

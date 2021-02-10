@@ -1,24 +1,30 @@
 import csv
 import subprocess
-import sys
 
 import psycopg2
 import os
+from os import listdir
+from os.path import isfile, join
+import time
+from tqdm import tqdm
 
 
 class PgLoader:
-    def __init__(self, selected):
+    def __init__(self):
         self.in_path: str = os.getenv("in_path", "/data/crypto-currency-pairs-at-minute-resolution")
-        self.selected = [x.strip() for x in selected[1:len(selected)]]
-        self.combi_name = '_'.join(selected[1:len(selected)])
+        #self.selected = [f.replace(".csv","") for f in listdir(self.in_path) if isfile(join(self.in_path, f))]
+        self.selected = ["ltcusd","xrpusd","btcusd","eosusd","ethusd"]
+        #self.selected = ["btcxch", "looeth"]
+        self.combi_name = "all_stocks"  # '_'.join(selected[1:len(selected)])
         self.out_path = os.getenv("out_path", "/data/") + f"{self.combi_name}.csv"
-        self.headers = os.getenv("headers", ["open", "close", "high", "low", "volume"])
+        self.headers = os.getenv("headers", ["open"]) # ["open", "close", "high", "low", "volume"]
         self.pg_config = {
             "dbname": os.getenv("dbname", "example"),
             "user": os.getenv("user", "example"),
-            "host": os.getenv("host", "postgres"),
+            "host": os.getenv("host", "localhost"),
             "password": os.getenv("password", "example"),
         }
+        self.conn = None
 
     def print(self):
         print("CONFIG: ")
@@ -30,34 +36,36 @@ class PgLoader:
         for key in self.pg_config:
             print(f"\t \t{key}: {self.pg_config[key]}")
 
-    def read_csv(self):
-        csvs = {}
-        for name in self.selected:
-            with open(f"{self.in_path}/{name}.csv", newline='') as file:
-                csv_file = csv.reader(file, delimiter=',', quotechar='|')
-                next(csv_file)  # skip head
-                csvs[name] = [line for line in csv_file]
-        return csvs
+    def read_csv(self, name):
+        with open(f"{self.in_path}/{name}.csv", newline='') as file:
+            csv_file = csv.reader(file, delimiter=',', quotechar='|')
+            next(csv_file)  # skip head
+            return [line for line in csv_file]
 
-    def create_table(self, conn):
+    def create_table(self):
         fields = self.get_fields()
-        cur = conn.cursor()
+        cur = self.conn.cursor()
+        cur.execute(f"DROP TABLE IF EXISTS {self.combi_name};")
         typed_fields = [f"{field} varchar(255)" for field in fields]
-        cur.execute(f"CREATE TABLE IF NOT EXISTS {self.combi_name} (time BIGINT, {', '.join(typed_fields)}, "
+        cur.execute(f"CREATE TABLE {self.combi_name} (time BIGINT, {', '.join(typed_fields)}, "
                     f"CONSTRAINT pk_{self.combi_name} PRIMARY KEY (time));")
 
-    def load_to_db(self, csvs, conn):
-        cur = conn.cursor()
-        for name in csvs:
-            csv_file = csvs[name]
-            for line in csv_file:
+    def load_to_db(self):
+        cur = self.conn.cursor()
+        print(f"loading {len(self.selected)} data sets")
+        for name in self.selected:
+            csv_file = self.read_csv(name)
+            print(f"loading {name} with {len(csv_file)} lines")
+            for line in tqdm(csv_file):
+                if len(line) - 1 > len(self.headers):
+                    line = line[:len(self.headers)+1]
                 selected_fields = [f"{name}_{head}" for head in self.headers]
-                field_value_tuples = [f"{selected_fields[i - 1]}='{line[i]}'" for i in range(1, len(line))]
+                field_value_tuples = [f"{selected_fields[i]}='{line[i + 1]}'" for i in range(0, len(self.headers))]
                 query = f"insert into {self.combi_name}(time, {', '.join(selected_fields)}) values({','.join(line)}) " \
                     f"on conflict on CONSTRAINT pk_{self.combi_name} do update set {', '.join(field_value_tuples)} " \
                     f"where {self.combi_name}.time = {line[0]};"
                 cur.execute(query)
-        conn.commit()
+        self.conn.commit()
 
     def dump_db(self):
         subprocess.run([
@@ -69,13 +77,11 @@ class PgLoader:
         subprocess.check_call([
             'psql', "-h", self.pg_config["host"], "-U", self.pg_config["user"], "-c", f"drop table {self.combi_name};"])
 
-    def load_all_data(self, conn):
-        print("Read files")
-        csvs = self.read_csv()
+    def load_all_data(self):
         print("create table")
-        self.create_table(conn)
+        self.create_table()
         print("Write to DB")
-        self.load_to_db(csvs, conn)
+        self.load_to_db()
 
     def update_initial(self, first_row, fields, cur):
         updated = [first_row[i] if first_row[i] is not None else '0' for i in range(1, len(first_row))]
@@ -83,20 +89,22 @@ class PgLoader:
         cur.execute(f"update {self.combi_name} set {', '.join(updated_k_v)} where time = {first_row[0]};")
         return [first_row[0]] + updated
 
-    def merge_data(self, conn):
+    def merge_data(self):
         fields = self.get_fields()
-        cur = conn.cursor()
-        cur.execute(f"select * from {self.combi_name} order by time ASC limit 1;")
-        current = cur.fetchone()
-        current = self.update_initial(current, fields, cur)
-        next_row = self.get_next(cur, current)
-        while next_row:
-            updated = [next_row[i] if next_row[i] is not None else current[i] for i in range(1, len(next_row))]
+        cur = self.conn.cursor()
+        cur.execute(f"select time from {self.combi_name} order by time ASC;")
+        times = cur.fetchall()
+        cur.execute(f"select * from {self.combi_name} where time = {times[0][0]};")
+        first = cur.fetchone()
+        previous = self.update_initial(first, fields, cur)
+        for time_ in tqdm(times):
+            cur.execute(f"select * from {self.combi_name} where time = {time_[0]};")
+            current = cur.fetchone()
+            updated = [current[i] if current[i] is not None else previous[i] for i in range(1, len(current))]
             updated_k_v = [f"{fields[i]} = '{updated[i]}'" for i in range(0, len(updated))]
-            cur.execute(f"update {self.combi_name} set {', '.join(updated_k_v)} where time = {next_row[0]};")
-            conn.commit()
-            current = [next_row[0]] + updated
-            next_row = self.get_next(cur, current)
+            cur.execute(f"update {self.combi_name} set {', '.join(updated_k_v)} where time = {time_[0]};")
+            self.conn.commit()
+            previous = [current[0]] + updated
 
     def get_next(self, cursor, current):
         current_time = current[0]
@@ -110,23 +118,15 @@ class PgLoader:
         pg_is_booting = True
         while pg_is_booting:
             try:
-                conn = psycopg2.connect(**self.pg_config)
+                self.conn = psycopg2.connect(**self.pg_config)
                 pg_is_booting = False
                 print("Start loading of data")
-                self.load_all_data(conn)
+                self.load_all_data()
                 print("merge data")
-                self.merge_data(conn)
-                print("Dump DB")
-                self.dump_db()
+                self.merge_data()
                 print("clean up")
-                conn.close()
-                self.clean_up()
+                self.conn.close()
             except Exception as e:
                 print(e)
                 print("Waiting for DB")
-
-
-if __name__ == "__main__":
-    loader = PgLoader(sys.argv)
-    loader.print()
-    loader.transform_into_one()
+                time.sleep(2)
