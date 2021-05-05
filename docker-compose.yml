@@ -15,13 +15,14 @@ services:
     volumes:
       - "/home/ps/data/crypto-currency-pairs-at-minute-resolution:/data"
       - "./app:/app"
-    command: "echo dummy"  # "python3 -u /app/main.py" # "sleep 50000000"#
+    command:  "python3 -u /app/main.py"  #"echo dummy" #
     environment:
       in_path: /data
       out_path: /data/dump.csv
       selected: absusd,abseth
       host: localhost
       PGDATA: /var/lib/postgresql/data/pgdata
+      past_factor: 10
     network_mode: host
   redis:
     image: 'redis'

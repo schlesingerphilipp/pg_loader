@@ -4,8 +4,6 @@ import os
 import redis
 import functools
 from tqdm import tqdm
-import json
-import sys
 
 class Transformer:
     def __init__(self):
@@ -18,12 +16,13 @@ class Transformer:
         self.redis_config = {
             "host": 'localhost',
             "port": 6379,
-            "db": 1
+            "db": 2
         }
         self.pg_conn = None
         self.redis_conn = None
         self.init_connections()
         self.pg_table = "all_stocks_no_rep"
+        self.include_past_factor = int(os.getenv("past_factor", "20"))
 
     def init_connections(self):
         pg_is_booting = True
@@ -34,49 +33,46 @@ class Transformer:
                 pg_is_booting = False
                 self.redis_conn = redis.Redis(**self.redis_config)
                 redis_is_booting = False
-                time.sleep(20)
             except Exception as e:
                 print(e)
                 print("Waiting for DB")
                 time.sleep(2)
 
 
-    def prepare_data(self, fields):
+    def prepare_data(self):
         cur = self.pg_conn.cursor()
         cur.execute(f"select count(*) from {self.pg_table}")
         rows = cur.fetchone()[0]
         print(f"There are {rows} rows")
-        self.transform_rows(cur, fields)
+        self.transform_rows(cur, self.include_past_factor)
         print("All done!")
 
 
-    def transform_rows(self, cur, fields):
+    def transform_rows(self, cur, include_past_factor):
         cur.execute(f"select time from {self.pg_table} order by time ASC;")
         times = cur.fetchall()
-        keys = ['open', 'close', 'high', 'low', 'volume']
-        key_set = [key for key in {field.split("_")[0] for field in fields}]
-        for key in key_set:
-            assert key in keys
-        for key in keys:
-            assert key in key_set
-
-        per_key = int(len(fields) / len(keys))
-        idx = 0
-        for time in tqdm(times):
-            step = self.load_row(cur, time[0], fields)
-            values = {}
-            for i in range(len(keys)):
-                raw_row = step[i*per_key:(i+1)*per_key]
-                row = [float(i) for i in raw_row]
-                values[keys[i]] = row
-            self.redis_conn.set(idx, json.dumps(values))
-            idx += 1
+        first_past_idx = -1 * self.get_past_time_idx(0, include_past_factor) + 1
+        for idx in tqdm(range(first_past_idx, len(times))):
+            timesteps = self.select_times(times, idx, include_past_factor)
+            steps = self.load_past_rows(cur, timesteps)
+            if (len(steps) != include_past_factor + 1):
+                raise Exception("Missing row for times")
+            row = []
+            for i in range(1,len(steps[0])):
+                column = []
+                for step in steps:
+                    column.append(step[i])
+                row.append(column)
+            row = [key for sublist in row for key in sublist]
+            row = functools.reduce(lambda a,b: f"{a},{b}", row)
+            self.redis_conn.set(idx - first_past_idx, row)
 
 
-    def load_row(self, cur, time, fields):
-        query = f"select {', '.join(fields)} from {self.pg_table} where time = {time}"
+    def load_past_rows(self, cur, times):
+        query = functools.reduce(lambda a,b: f"{a} OR time = {b[0]}", times, f"select * from {self.pg_table} where time = {times[0][0]}")
+        query += " order by time asc;"
         cur.execute(query)
-        return cur.fetchone()
+        return cur.fetchall()
 
     def select_times(self, times, idx, include_past_factor):
         indicies = [self.get_past_time_idx(idx, i) for i in range(include_past_factor + 1)]

@@ -14,10 +14,10 @@ class PgLoader:
         self.in_path: str = os.getenv("in_path", "/data/crypto-currency-pairs-at-minute-resolution")
         #self.selected = [f.replace(".csv","") for f in listdir(self.in_path) if isfile(join(self.in_path, f))]
         self.selected = ["ltcusd","xrpusd","btcusd","eosusd","ethusd"]
-        #self.selected = ["btcxch", "looeth"]
-        self.combi_name = "all_stocks"  # '_'.join(selected[1:len(selected)])
+        #self.selected = ["agiusd", "aidusd"]
+        self.combi_name = "all_stocks_no_rep"  # '_'.join(selected[1:len(selected)])
         self.out_path = os.getenv("out_path", "/data/") + f"{self.combi_name}.csv"
-        self.headers = os.getenv("headers", ["open"]) # ["open", "close", "high", "low", "volume"]
+        self.headers = os.getenv("headers", ["open", "close", "high", "low", "volume"])
         self.pg_config = {
             "dbname": os.getenv("dbname", "example"),
             "user": os.getenv("user", "example"),
@@ -49,6 +49,7 @@ class PgLoader:
         typed_fields = [f"{field} varchar(255)" for field in fields]
         cur.execute(f"CREATE TABLE {self.combi_name} (time BIGINT, {', '.join(typed_fields)}, "
                     f"CONSTRAINT pk_{self.combi_name} PRIMARY KEY (time));")
+        self.conn.commit()
 
     def load_to_db(self):
         cur = self.conn.cursor()
@@ -59,7 +60,7 @@ class PgLoader:
             for line in tqdm(csv_file):
                 if len(line) - 1 > len(self.headers):
                     line = line[:len(self.headers)+1]
-                selected_fields = [f"{name}_{head}" for head in self.headers]
+                selected_fields = [f"{head}_{name}" for head in self.headers]
                 field_value_tuples = [f"{selected_fields[i]}='{line[i + 1]}'" for i in range(0, len(self.headers))]
                 query = f"insert into {self.combi_name}(time, {', '.join(selected_fields)}) values({','.join(line)}) " \
                     f"on conflict on CONSTRAINT pk_{self.combi_name} do update set {', '.join(field_value_tuples)} " \
@@ -106,13 +107,9 @@ class PgLoader:
             self.conn.commit()
             previous = [current[0]] + updated
 
-    def get_next(self, cursor, current):
-        current_time = current[0]
-        cursor.execute(f"select * from {self.combi_name} where time > {current_time} order by time asc limit 1;")
-        return cursor.fetchone()
 
     def get_fields(self):
-        return [f"{name}_{head}" for name in self.selected for head in self.headers]
+        return [f"{head}_{name}" for head in self.headers for name in self.selected]
 
     def transform_into_one(self):
         pg_is_booting = True
@@ -126,6 +123,7 @@ class PgLoader:
                 self.merge_data()
                 print("clean up")
                 self.conn.close()
+                return self.get_fields()
             except Exception as e:
                 print(e)
                 print("Waiting for DB")
