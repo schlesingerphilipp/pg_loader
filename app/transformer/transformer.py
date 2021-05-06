@@ -24,6 +24,7 @@ class Transformer:
         self.redis_conn = None
         self.init_connections()
         self.pg_table = "all_stocks_no_rep"
+        self.headers = os.getenv("headers", ["open", "close", "high", "low", "volume"])
 
     def init_connections(self):
         pg_is_booting = True
@@ -53,22 +54,21 @@ class Transformer:
     def transform_rows(self, cur, fields):
         cur.execute(f"select time from {self.pg_table} order by time ASC;")
         times = cur.fetchall()
-        keys = ['open', 'close', 'high', 'low', 'volume']
         key_set = [key for key in {field.split("_")[0] for field in fields}]
         for key in key_set:
-            assert key in keys
-        for key in keys:
+            assert key in self.headers
+        for key in self.headers:
             assert key in key_set
 
-        per_key = int(len(fields) / len(keys))
+        per_key = int(len(fields) / len(self.headers))
         idx = 0
         for time in tqdm(times):
             step = self.load_row(cur, time[0], fields)
             values = {}
-            for i in range(len(keys)):
+            for i in range(len(self.headers)):
                 raw_row = step[i*per_key:(i+1)*per_key]
                 row = [float(i) for i in raw_row]
-                values[keys[i]] = row
+                values[self.headers[i]] = row
             self.redis_conn.set(idx, json.dumps(values))
             idx += 1
 

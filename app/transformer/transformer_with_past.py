@@ -4,6 +4,7 @@ import os
 import redis
 import functools
 from tqdm import tqdm
+import json
 
 class Transformer:
     def __init__(self):
@@ -23,6 +24,7 @@ class Transformer:
         self.init_connections()
         self.pg_table = "all_stocks_no_rep"
         self.include_past_factor = int(os.getenv("past_factor", "20"))
+        self.headers = os.getenv("headers", ["open", "close", "high", "low", "volume"])
 
     def init_connections(self):
         pg_is_booting = True
@@ -39,38 +41,49 @@ class Transformer:
                 time.sleep(2)
 
 
-    def prepare_data(self):
+    def prepare_data(self, fields):
         cur = self.pg_conn.cursor()
         cur.execute(f"select count(*) from {self.pg_table}")
         rows = cur.fetchone()[0]
         print(f"There are {rows} rows")
-        self.transform_rows(cur, self.include_past_factor)
+        self.transform_rows(cur, fields, self.include_past_factor)
         print("All done!")
 
 
-    def transform_rows(self, cur, include_past_factor):
+    def transform_rows(self, cur, fields, include_past_factor):
         cur.execute(f"select time from {self.pg_table} order by time ASC;")
         times = cur.fetchall()
+        keys = ['open', 'close', 'high', 'low', 'volume']
+        key_set = [key for key in {field.split("_")[0] for field in fields}]
+        for key in key_set:
+            assert key in keys
+        for key in keys:
+            assert key in key_set
         first_past_idx = -1 * self.get_past_time_idx(0, include_past_factor) + 1
+        per_key = int(len(fields) / len(self.headers))
         for idx in tqdm(range(first_past_idx, len(times))):
             timesteps = self.select_times(times, idx, include_past_factor)
-            steps = self.load_past_rows(cur, timesteps)
+            steps = self.load_past_rows(cur, timesteps, fields)
             if (len(steps) != include_past_factor + 1):
                 raise Exception("Missing row for times")
-            row = []
-            for i in range(1,len(steps[0])):
+            values = {}
+            #Add history of 1 field like btsusd_open
+            for i in range(len(fields)):
                 column = []
                 for step in steps:
-                    column.append(step[i])
-                row.append(column)
-            row = [key for sublist in row for key in sublist]
-            row = functools.reduce(lambda a,b: f"{a},{b}", row)
-            self.redis_conn.set(idx - first_past_idx, row)
+                    column.append([float(step[i])])
+                values[f"{fields[i]}_hist"] = column
+            #Add latest value of one header like open of all stocks
+            for i in range(len(self.headers)):
+                raw_row = steps[0][i*per_key:(i+1)*per_key]
+                row = [float(i) for i in raw_row]
+                values[self.headers[i]] = row
+            self.redis_conn.set(idx - first_past_idx, json.dumps(values))
 
 
-    def load_past_rows(self, cur, times):
-        query = functools.reduce(lambda a,b: f"{a} OR time = {b[0]}", times, f"select * from {self.pg_table} where time = {times[0][0]}")
-        query += " order by time asc;"
+    def load_past_rows(self, cur, times, fields):
+        query = functools.reduce(lambda a,b: f"{a} OR time = {b[0]}", times, f"select  {', '.join(fields)} from {self.pg_table} where time = {times[0][0]}")
+        query += " order by time desc;"
         cur.execute(query)
         return cur.fetchall()
 
@@ -83,3 +96,9 @@ class Transformer:
         return idx - i * i
 
 
+if __name__ == "__main__":
+    selected = ["ltcusd", "xrpusd", "btcusd", "eosusd", "ethusd"]
+    headers = os.getenv("headers", ["open", "close", "high", "low", "volume"])
+    fields = [f"{head}_{name}" for head in headers for name in selected]
+    transformer = Transformer()
+    transformer.prepare_data(fields)

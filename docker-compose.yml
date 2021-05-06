@@ -15,7 +15,7 @@ services:
     volumes:
       - "/home/ps/data/crypto-currency-pairs-at-minute-resolution:/data"
       - "./app:/app"
-    command:  "python3 -u /app/main.py"  #"echo dummy" #
+    command: "echo dummy" # "python3 -u /app/main.py"  #
     environment:
       in_path: /data
       out_path: /data/dump.csv
@@ -31,5 +31,5 @@ services:
     network_mode: host
     volumes:
       - "/home/ps/data/redis:/data"
-    command: "redis-server --appendonly yes"
+    command: "redis-server --appendonly yes --maxmemory 5gb"
 
