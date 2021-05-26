@@ -1,4 +1,4 @@
-from transformer.transformer_with_past import Transformer
+from transformer.transformer import Transformer
 from pg_loader.pg_loader import PgLoader
 
 if __name__ == "__main__":

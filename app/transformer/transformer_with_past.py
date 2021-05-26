@@ -17,7 +17,7 @@ class Transformer:
         self.redis_config = {
             "host": 'localhost',
             "port": 6379,
-            "db": 2
+            "db": 3
         }
         self.pg_conn = None
         self.redis_conn = None
@@ -51,7 +51,8 @@ class Transformer:
 
 
     def transform_rows(self, cur, fields, include_past_factor):
-        cur.execute(f"select time from {self.pg_table} order by time ASC;")
+        offset = self.get_non_zero_timestep(cur, fields)
+        cur.execute(f"select time from {self.pg_table} where time > {offset} order by time ASC;")
         times = cur.fetchall()
         keys = ['open', 'close', 'high', 'low', 'volume']
         key_set = [key for key in {field.split("_")[0] for field in fields}]
@@ -94,6 +95,13 @@ class Transformer:
 
     def get_past_time_idx(self, idx, i):
         return idx - i * i
+
+    def get_non_zero_timestep(self, cur, fields):
+        field__non_zero_constraints = [f"{field}::float > 0" for field in fields]
+        field__non_zero_constraints = functools.reduce(lambda x,y: x + " and " + y, field__non_zero_constraints)
+        cur.execute(f"select time from {self.pg_table} where {field__non_zero_constraints} order by time ASC limit 1;")
+        first_non_zero_time = cur.fetchone()[0]
+        return first_non_zero_time
 
 
 if __name__ == "__main__":
