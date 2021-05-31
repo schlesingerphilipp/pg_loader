@@ -1,6 +1,6 @@
-from transformer.transformer import Transformer
+from transformer.transformer_from_csv import Transformer
 
 if __name__ == "__main__":
-    print("Hello")
     transformer = Transformer()
-    transformer.prepare_data(10)
+    #transformer.prepare_data()
+    transformer.print_some()

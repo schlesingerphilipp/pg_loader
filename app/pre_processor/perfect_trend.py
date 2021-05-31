@@ -28,8 +28,8 @@ class PreprocessorConf:
 def read_csv(name, in_path):
     with open(f"{in_path}{name}.csv", newline='') as file:
         csv_file = csv.reader(file, delimiter=',', quotechar='|')
-        next(csv_file)  # skip head
-        return [[float(x)for x in line] for line in csv_file]
+        head = next(csv_file)  # skip head
+        return head, [[float(x)for x in line] for line in csv_file]
 
 def write_csv(with_trends, name, out_path, headers):
     with open(f"{out_path}{name}.csv", "w", newline='') as csvfile:
@@ -40,32 +40,34 @@ def write_csv(with_trends, name, out_path, headers):
 
 
 
-def add_trends(csv_file):
-    trend_windows = [1,2,10,60,120,1440]
+def add_trends(headers, csv_file):
+    trend_windows = [2,10,60,120,1440]
     window = csv_file[:1441]
     with_trend = []
     for line in tqdm(csv_file[:len(csv_file) - 1440]):
-        trend = get_trend(window, trend_windows)
+        trend = get_trend(headers, window, trend_windows)
         with_trend.append(trend)
         window.append(line)
         window = window[1:]
     return with_trend
 
-def get_trend(currents, trend_windows):
+def get_trend(headers, currents, trend_windows):
     trends = [currents[0][0]] # time
-    for i in range(1,len(currents[0])):
+
+    for i in range(1,len(headers)):
+        trends.append(currents[0][i]) # original value
         values = [current[i] for current in currents]
         for t in trend_windows:
             trends.append((sum(values[:t]) / t) - values[0])
     return trends
 
 
-def preprocess_with_trends(selected, headers, in_path, out_path):
+def preprocess_with_trends(selected, trend_headers, in_path, out_path):
     for selected in selected:
-        csv_file = read_csv(selected, in_path)
-        with_trends = add_trends(csv_file)
-        assert len(with_trends[0]) == 1 + len(headers)
-        write_csv(with_trends, selected, out_path, headers)
+        headers, csv_file = read_csv(selected, in_path)
+        with_trends = add_trends(headers, csv_file)
+        assert len(with_trends[0]) == 1 + len(trend_headers)
+        write_csv(with_trends, selected, out_path, trend_headers)
 
 
 if __name__ == "__main__":

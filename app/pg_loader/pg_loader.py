@@ -11,17 +11,16 @@ from tqdm import tqdm
 
 class PgLoader:
     def __init__(self):
-        self.in_path: str = os.getenv("in_path", "/data/with-trend") # '/home/ps/data/crypto-currency-pairs-at-minute-resolution/with-trend'
-        #self.selected = [f.replace(".csv","") for f in listdir(self.in_path) if isfile(join(self.in_path, f))]
-        self.selected = ["ltcusd","xrpusd","btcusd","eosusd","ethusd"]
-        #self.selected = ["agiusd", "aidusd"]
-        self.combi_name = "all_stocks_no_rep"  # '_'.join(selected[1:len(selected)])
-        self.out_path = os.getenv("out_path", "/data/with-trend/") + f"{self.combi_name}.csv"
-        self.headers = os.getenv("headers", ["open", "open_t1", "open_t10", "open_t60", "open_t120", "open_t1440",
+        self.selected = ["ltcusd", "xrpusd", "btcusd", "eosusd", "ethusd"]
+        self.headers = ["open", "open_t1", "open_t10", "open_t60", "open_t120", "open_t1440",
                         "close", "close_t1", "close_t10", "close_t60", "close_t120", "close_t1440",
-                        "high","high_t1", "high_t10", "high_t60", "high_t120", "high_t1440",
+                        "high", "high_t1", "high_t10", "high_t60", "high_t120", "high_t1440",
                         "low", "low_t1", "low_t10", "low_t60", "low_t120", "low_t1440",
-                        "volume", "volume_t1", "volume_t10", "volume_t60", "volume_t120", "volume_t1440"])
+                        "volume", "volume_t1", "volume_t10", "volume_t60", "volume_t120", "volume_t1440"]
+        self.in_path: str =  '/home/ps/data/crypto-currency-pairs-at-minute-resolution/with-trend' #os.getenv("in_path", "/data/with-trend") #
+        self.selected = ["ltcusd","xrpusd","btcusd","eosusd","ethusd"]
+        self.combi_name = "all_stocks_no_rep"  # '_'.join(selected[1:len(selected)])
+        self.out_path = os.getenv("out_path", "/home/ps/data/") + f"{self.combi_name}.csv"
         self.pg_config = {
             "dbname": os.getenv("dbname", "example"),
             "user": os.getenv("user", "example"),
@@ -35,7 +34,6 @@ class PgLoader:
         print(f"\tin_path: {self.in_path}")
         print(f"\tout_path: {self.out_path}")
         print(f"\tselected: {self.selected}")
-        print(f"\theaders: {self.headers}")
         print("\tpg_config:")
         for key in self.pg_config:
             print(f"\t \t{key}: {self.pg_config[key]}")
@@ -43,14 +41,14 @@ class PgLoader:
     def read_csv(self, name):
         with open(f"{self.in_path}/{name}.csv", newline='') as file:
             csv_file = csv.reader(file, delimiter=',', quotechar='|')
-            next(csv_file)  # skip head
-            return [line for line in csv_file]
+            head = next(csv_file)
+            return (head, [line for line in csv_file])
 
     def create_table(self):
         fields = self.get_fields()
         cur = self.conn.cursor()
         cur.execute(f"DROP TABLE IF EXISTS {self.combi_name};")
-        typed_fields = [f"{field} varchar(255)" for field in fields]
+        typed_fields = [f"{field} numeric" for field in fields]
         cur.execute(f"CREATE TABLE {self.combi_name} (time BIGINT, {', '.join(typed_fields)}, "
                     f"CONSTRAINT pk_{self.combi_name} PRIMARY KEY (time));")
         self.conn.commit()
@@ -59,12 +57,12 @@ class PgLoader:
         cur = self.conn.cursor()
         print(f"loading {len(self.selected)} data sets")
         for name in self.selected:
-            csv_file = self.read_csv(name)
+            headers, csv_file = self.read_csv(name)
             print(f"loading {name} with {len(csv_file)} lines")
+            print("HEADERS:")
+            print(headers)
             for line in tqdm(csv_file):
-                if len(line) - 1 > len(self.headers):
-                    line = line[:len(self.headers)+1]
-                selected_fields = [f"{head}_{name}" for head in self.headers]
+                selected_fields = [f"{head}_{name}" for head in headers]
                 field_value_tuples = [f"{selected_fields[i]}='{line[i + 1]}'" for i in range(len(selected_fields))]
                 query = f"insert into {self.combi_name}(time, {', '.join(selected_fields)}) values({','.join(line)}) " \
                     f"on conflict on CONSTRAINT pk_{self.combi_name} do update set {', '.join(field_value_tuples)} " \
@@ -124,9 +122,9 @@ class PgLoader:
                 print("Start loading of data")
                 self.load_all_data()
                 print("merge data")
-                self.merge_data()
+                #self.merge_data()
                 print("dump")
-                self.dump_db()
+                #self.dump_db()
                 print("clean up")
                 self.conn.close()
                 return self.get_fields()
