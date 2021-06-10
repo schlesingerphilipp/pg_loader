@@ -38,7 +38,7 @@ class Transformer:
             print("HEADER:")
             print(head)
             for line in tqdm(csv_file):
-                values = {head[i]: float(line[i]) for i in range(len(line))}
+                values = {head[i]: [float(line[i])] for i in range(1,len(line))}
                 self.redis_conn.set(idx, json.dumps(values))
                 idx += 1
 
