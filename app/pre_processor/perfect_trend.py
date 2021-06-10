@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 class PreprocessorConf:
     def __init__(self):
-        self.in_path: str = "/home/ps/data/crypto-currency-pairs-at-minute-resolution/"
+        self.in_path: str = "/home/ps/data/crypto-currency-pairs-at-minute-resolution/no-gaps/"
         self.selected = ["ltcusd","xrpusd","btcusd","eosusd","ethusd"]
         self.out_path = "/home/ps/data/crypto-currency-pairs-at-minute-resolution/with-trend/"
         self.headers = ["open", "open_t1", "open_t10", "open_t60", "open_t120", "open_t1440",

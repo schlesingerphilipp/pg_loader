@@ -14,12 +14,11 @@ services:
     build: 'app'
     volumes:
       - "/home/ps/data/crypto-currency-pairs-at-minute-resolution:/data"
-      - "./app:/app"
-    command:   "echo dummy" # "python3 -u /app/main.py"
+      - "./:/app"
+    command: "python3 -u /app/main.py" #"echo dummy" #
     environment:
       host: localhost
       PGDATA: /var/lib/postgresql/data/pgdata
-      past_factor: 10
     network_mode: host
   redis:
     image: 'redis'
